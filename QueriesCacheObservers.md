@@ -1,5 +1,124 @@
 # Queries, Caching, and Observers
 
+## Observer Pattern
+
+- References
+  - [Observer Pattern](https://www.patterns.dev/vanilla/observer-pattern/)
+
+### Core Idea
+
+- A subject maintains a list of observers and broadcasts changes to them.
+- Observers can attach/detach freely; the subject has no knowledge of specific consumers (decoupling)
+
+### Minimal Implementation - the core shape
+
+> [!IMPORTANT]
+> At minimum, a subject needs three things
+> - somewhere to keep observers
+> - a way to add and remove them
+> - and a way to push updates
+
+```ts
+class Subject {
+  #observers = new Set();
+
+  subscribe(observer) {
+    this.#observers.add(observer);
+    return () => this.#observers.delete(observer);
+  }
+
+  notify(payload) {
+    for (const observer of this.#observers) {
+      observer(payload);
+    }
+  }
+}
+```
+
+### Example Use Case - Netflix Example
+
+### Scenario
+
+You subscribe to a show. When a new episode drops, Netflix notifies everyone
+who's subscribed — it doesn't care who you are or what you do with the
+notification.
+
+### The Code
+
+```typescript
+type EpisodeHandler = (title: string) => void;
+
+class Show {
+  #subscribers = new Set<EpisodeHandler>();
+
+  subscribe(fn: EpisodeHandler): () => void {
+    this.#subscribers.add(fn);
+    return () => this.#subscribers.delete(fn); // unsubscribe
+  }
+
+  releaseEpisode(title: string): void {
+    for (const fn of this.#subscribers) {
+      fn(title);
+    }
+  }
+}
+```
+
+### Usage
+
+```typescript
+const strangerThings = new Show();
+
+// Different "observers" reacting in their own way
+const sendPushNotification: EpisodeHandler = (title) =>
+  console.log(`📱 Push: New episode "${title}" is out!`);
+
+const updateDownloadQueue: EpisodeHandler = (title) =>
+  console.log(`⬇️ Auto-downloading "${title}" for offline viewing`);
+
+const sendEmail: EpisodeHandler = (title) =>
+  console.log(`📧 Email: "${title}" just dropped, come watch!`);
+
+// Subscribe to the show
+const unsub1 = strangerThings.subscribe(sendPushNotification);
+const unsub2 = strangerThings.subscribe(updateDownloadQueue);
+const unsub3 = strangerThings.subscribe(sendEmail);
+
+// Netflix releases a new episode
+strangerThings.releaseEpisode("Chapter 9: The Piggyback");
+
+// Output:
+// 📱 Push: New episode "Chapter 9: The Piggyback" is out!
+// ⬇️ Auto-downloading "Chapter 9: The Piggyback" for offline viewing
+// 📧 Email: "Chapter 9: The Piggyback" just dropped, come watch!
+
+// unsubscribe example
+unsub2(); // stop auto-downloading — e.g. user turned off downloads in settings
+```
+
+| Role              | In Netflix terms                                  |
+| ----------------- | ------------------------------------------------- |
+| **Subject**       | The `Show` (e.g., Stranger Things)                |
+| **Observers**     | Push notifications, download queue, email service |
+| **`subscribe()`** | You hitting the bell icon / following a show      |
+| **`notify()`**    | Netflix publishing a new episode                  |
+
+- The `Show` has **zero knowledge** of push notifications, emails, or downloads
+  — it just knows "someone is listening."
+- If you **unsubscribe** (stop following the show), you stop getting notified
+  — but Netflix keeps releasing episodes regardless.
+- Adding a new reaction (say, "notify your smart TV") doesn't require touching
+  the `Show` class at all — just subscribe another function.
+
+**The whole pattern in one sentence:** one thing happening, many independent
+reactions, zero coupling between them.
+
+
+## Cache - What exactly is `Cache`?
+
+- `Cache` in the most basic form, is a piece of software that **STORES** data
+- `Cache` enables **quicker** data access
+
 ## Mini React Query
 
 - React Query is an async state manager
@@ -10,10 +129,7 @@
 
 ### Building out the Query Client
 
-- `QueryClient` contains and manages the `CACHE`
-- What exactly is `CACHE`, and how does `QueryClient` manage it?
-  - `CACHE`, in the most basic form, is a piece of software that **STORES** data
-  - `CACHE` enables **quicker** data access
+- `QueryClient` contains and manages the `Cache`
 
 #### Tanstack Query Example
 
@@ -200,9 +316,9 @@ const { data, status, error, ...rest } = useQuery({
 
 As you know, the `status` can be one of three values:
 
-`pending` - the Query has not yet completed, so you don't have data yet.
-`success` - the Query has finished successfully, and data is available.
-`error` - the Query has failed, and you have an error.
+- `pending` - the Query has not yet completed, so you don't have data yet.
+- `success` - the Query has finished successfully, and data is available.
+- `error` - the Query has failed, and you have an error.
 
 ###### `pending` status
 
@@ -233,7 +349,8 @@ get(queryKey) {
 
 - If our queryFn resolves successfully,
 - We'll store that data in the cache with the status set to success.
-- If our queryFn rejects successfully `:)`,
+- If our queryFn rejects successfully `:p`,
+- We'll set the status to `error` and store the error in the cache.
 
 ```ts
 // FROM
