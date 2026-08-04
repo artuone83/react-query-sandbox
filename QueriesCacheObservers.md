@@ -114,6 +114,512 @@ unsub2(); // stop auto-downloading — e.g. user turned off downloads in setting
 reactions, zero coupling between them.
 
 
+## TanStack Query `useQuery` Observers Explained
+
+One of the most important concepts in TanStack Query is the **Query Observer**. Once you understand observers, you'll understand why TanStack Query is so efficient.
+
+Let's use a practical example.
+
+---
+
+### Scenario
+
+We have three React components:
+
+```tsx
+<App>
+  <UserProfile />
+  <UserPosts />
+  <UserSidebar />
+</App>
+```
+
+All three components call exactly the same query:
+
+```tsx
+const userQuery = useQuery({
+  queryKey: ["user", 1],
+  queryFn: () =>
+    fetch("https://jsonplaceholder.typicode.com/users/1")
+      .then(res => res.json()),
+})
+```
+
+---
+
+#### What actually happens?
+
+Many beginners think:
+
+> Three components → three fetches
+
+This is **not** what happens.
+
+Instead:
+
+```text
+QueryClient
+    │
+    │
+QueryCache
+    │
+    ▼
+Query ["user", 1]
+        │
+        ├── Observer (UserProfile)
+        ├── Observer (UserPosts)
+        └── Observer (UserSidebar)
+```
+
+There is:
+
+- **1 Query**
+- **3 QueryObservers**
+- **1 network request**
+
+---
+
+#### Step 1 — First component mounts
+
+`UserProfile`
+
+```tsx
+function UserProfile() {
+  const query = useQuery({
+    queryKey: ["user", 1],
+    queryFn: fetchUser,
+  })
+
+  return <div>{query.data?.name}</div>
+}
+```
+
+Since the cache is empty:
+
+```text
+QueryCache
+
+(empty)
+```
+
+TanStack Query creates:
+
+```text
+Query
+key = ["user", 1]
+
+Observers:
+    UserProfile
+```
+
+The query immediately starts fetching.
+
+```text
+GET /users/1
+```
+
+---
+
+#### Step 2 — Second component mounts
+
+```tsx
+function UserPosts() {
+  const query = useQuery({
+    queryKey: ["user", 1],
+    queryFn: fetchUser,
+  })
+}
+```
+
+TanStack Query checks:
+
+```text
+Does query ["user", 1] already exist?
+
+YES
+```
+
+Instead of creating another query, it simply adds another observer.
+
+```text
+Query
+
+Observers
+
+✓ UserProfile
+✓ UserPosts
+```
+
+No new fetch occurs because one is already in progress.
+
+---
+
+#### Step 3 — Third component mounts
+
+Same thing.
+
+```text
+Observers
+
+✓ UserProfile
+✓ UserPosts
+✓ UserSidebar
+```
+
+Still only one fetch.
+
+---
+
+#### Request finishes
+
+Suppose JSONPlaceholder returns:
+
+```json
+{
+  "id": 1,
+  "name": "Leanne Graham"
+}
+```
+
+The Query stores:
+
+```text
+Query State
+
+status: success
+
+data:
+{
+  id: 1,
+  name: "Leanne Graham"
+}
+```
+
+Now the important part:
+
+The Query notifies **every observer**.
+
+```text
+Query
+
+      │
+      ├────────► Observer 1
+      ├────────► Observer 2
+      └────────► Observer 3
+```
+
+Each observer causes its own component to re-render.
+
+```text
+UserProfile
+
+renders
+
+Leanne Graham
+
+-------------------
+
+UserPosts
+
+renders
+
+Leanne Graham
+
+-------------------
+
+UserSidebar
+
+renders
+
+Leanne Graham
+```
+
+Notice:
+
+There was still only **one fetch**.
+
+---
+
+### Why observers exist
+
+Each component can have different options.
+
+Example:
+
+```tsx
+useQuery({
+  queryKey: ["user", 1],
+  queryFn: fetchUser,
+  select: data => data.name,
+})
+```
+
+Another component:
+
+```tsx
+useQuery({
+  queryKey: ["user", 1],
+  queryFn: fetchUser,
+  select: data => data.email,
+})
+```
+
+The cache stores:
+
+```ts
+{
+  id: 1,
+  name: "Leanne",
+  email: "leanne@example.com",
+}
+```
+
+Observer A receives:
+
+```text
+"Leanne"
+```
+
+Observer B receives:
+
+```text
+"leanne@example.com"
+```
+
+The Query stores the full object **once**, while each observer derives its own view.
+
+---
+
+### Different loading states
+
+Suppose one component uses `placeholderData`:
+
+```tsx
+const query = useQuery({
+  queryKey: ["user", 1],
+  queryFn: fetchUser,
+  placeholderData: {
+    name: "Loading...",
+  },
+})
+```
+
+Another component:
+
+```tsx
+const query = useQuery({
+  queryKey: ["user", 1],
+  queryFn: fetchUser,
+})
+```
+
+These are still observing the same Query.
+
+But each observer exposes its own result.
+
+Observer A:
+
+```text
+data:
+Loading...
+```
+
+Observer B:
+
+```text
+data:
+undefined
+```
+
+Same Query.
+
+Different observer results.
+
+---
+
+### Refetch
+
+Later:
+
+```tsx
+queryClient.invalidateQueries({
+  queryKey: ["user", 1],
+})
+```
+
+The Query becomes stale.
+
+```text
+Observers
+
+Profile
+Posts
+Sidebar
+```
+
+The Query performs **one** refetch.
+
+```text
+GET /users/1
+```
+
+When it finishes:
+
+```text
+notify()
+
+↓
+
+Observer A
+
+Observer B
+
+Observer C
+```
+
+All three components update.
+
+---
+
+### Unmounting
+
+Suppose:
+
+```text
+UserSidebar
+```
+
+is removed.
+
+```text
+Observers
+
+✓ Profile
+✓ Posts
+```
+
+Nothing happens to the Query because it still has active observers.
+
+---
+
+Now:
+
+```text
+UserPosts
+```
+
+unmounts.
+
+```text
+Observers
+
+✓ Profile
+```
+
+Still active.
+
+---
+
+Finally:
+
+```text
+UserProfile
+```
+
+unmounts.
+
+```text
+Observers
+
+(none)
+```
+
+The Query remains in the cache (for the configured `gcTime`, 5 minutes by default).
+
+```text
+Cache
+
+Query
+["user", 1]
+
+Observers: 0
+```
+
+No component is using it anymore, but the cached data is retained.
+
+---
+
+### If another component mounts 30 seconds later
+
+```tsx
+useQuery({
+  queryKey: ["user", 1],
+  queryFn: fetchUser,
+})
+```
+
+TanStack Query finds:
+
+```text
+Query exists
+
+Observers = 0
+
+Data exists
+```
+
+A new observer is attached:
+
+```text
+Observer
+
+✓ NewComponent
+```
+
+If the data is still **fresh** (`staleTime` has not expired), it is returned immediately without a network request.
+
+If the data is **stale**, the cached data is returned immediately while a background refetch is started.
+
+---
+
+### Mental model
+
+Think of the architecture like this:
+
+```text
+               QueryClient
+                    │
+             QueryCache
+                    │
+        ┌────────────────────┐
+        │ Query ["user", 1]  │
+        │                    │
+        │ data               │
+        │ status             │
+        │ fetch state        │
+        └────────────────────┘
+           ▲      ▲      ▲
+           │      │      │
+     Observer Observer Observer
+        │         │         │
+        ▼         ▼         ▼
+   UserProfile UserPosts UserSidebar
+```
+
+---
+
+### Key Takeaways
+
+- A **Query** represents a unique `queryKey`.
+- Every `useQuery()` call creates a **QueryObserver**.
+- Multiple observers can subscribe to the same Query.
+- Only **one network request** is made for a given Query, even if many observers are watching it.
+- When the Query updates, it notifies all observers.
+- Each observer can expose different derived data (`select`, `placeholderData`, etc.).
+- When the last observer unmounts, the Query stays in the cache until `gcTime` expires.
+- If a new observer subscribes before garbage collection, it reuses the existing cached Query.
+
+
 ## Cache - What exactly is `Cache`?
 
 - `Cache` in the most basic form, is a piece of software that **STORES** data
